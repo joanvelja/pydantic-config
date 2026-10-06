@@ -533,6 +533,37 @@ def test_discriminator_type_injected_from_default(tmp_toml_file):
     assert config.data.value == 100
 
 
+def test_discriminator_type_injected_from_default_factory_without_building_it(tmp_toml_file):
+    """A model class given as ``default_factory`` supplies the default type tag too. The
+    tag is read from the class, not from a built default: a default whose own validation
+    fails (e.g. against the runtime environment) must not fail a config that overrides it."""
+    from typing import Literal
+
+    from pydantic import model_validator
+
+    class DataConfigA(BaseConfig):
+        type: Literal["a"] = "a"
+        value: int = 1
+
+        @model_validator(mode="after")
+        def _reject_default_value(self):
+            if self.value == 1:
+                raise ValueError("value 1 is not buildable here")
+            return self
+
+    class DataConfigB(BaseConfig):
+        type: Literal["b"] = "b"
+        value: int = 2
+
+    class ConfigWithUnion(BaseConfig):
+        data: Annotated[DataConfigA | DataConfigB, Field(discriminator="type")] = Field(default_factory=DataConfigA)
+
+    write_file(tmp_toml_file, "[data]\nvalue = 100")
+    config = cli(ConfigWithUnion, args=["@", tmp_toml_file])
+    assert config.data.type == "a"
+    assert config.data.value == 100
+
+
 def test_discriminator_type_explicit_overrides_default(tmp_toml_file):
     """When the TOML file explicitly provides a 'type', it should be used."""
     from typing import Annotated, Literal
@@ -2289,14 +2320,15 @@ def test_field_validator_accepts_valid():
 # ---------------------------------------------------------------------------
 
 
-def test_help_optional_enabled_by_default_title():
+@pytest.mark.parametrize("from_factory", [False, True], ids=["instance", "default_factory"])
+def test_help_optional_enabled_by_default_title(from_factory):
     from pydantic_config.cli import _render_help
 
     class Inner(BaseConfig):
         x: int = 1
 
     class C(BaseConfig):
-        inner: Inner | None = Inner()
+        inner: Inner | None = Field(default_factory=Inner) if from_factory else Inner()
 
     out = _render_help(C, prog="test")
     assert "optional, enabled by default" in out

@@ -33,6 +33,8 @@ import typing
 from typing import Any, Literal, TypeVar, Union, get_args, get_origin, overload
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic.fields import FieldInfo
+from pydantic_core import PydanticUndefined
 
 T = TypeVar("T")
 
@@ -91,6 +93,30 @@ def _dict_value_type_is_str(annotation: type) -> bool:
     return len(args) == 2 and args[1] is str
 
 
+def _default_model_class(field_info: FieldInfo) -> type[BaseModel] | None:
+    """The model class a field defaults to: the class of a model-instance default, or a
+    model class given as ``default_factory``. The factory is read, never called: building
+    the default would run its validators (possibly against runtime state, e.g. the
+    environment) only to learn what it is."""
+    if isinstance(field_info.default, BaseModel):
+        return type(field_info.default)
+    factory = field_info.default_factory
+    if isinstance(factory, type) and issubclass(factory, BaseModel):
+        return factory
+    return None
+
+
+def _default_type_tag(field_info: FieldInfo) -> Any:
+    """The ``type`` tag of a field's default model, or ``PydanticUndefined`` if it has none:
+    a model-instance default's own tag, else the ``type`` field default of its model class."""
+    if isinstance(field_info.default, BaseModel):
+        return getattr(field_info.default, "type", PydanticUndefined)
+    default_cls = _default_model_class(field_info)
+    if default_cls is None or "type" not in default_cls.model_fields:
+        return PydanticUndefined
+    return default_cls.model_fields["type"].default
+
+
 class BaseConfig(BaseModel):
     """Base configuration class with strict validation (extra fields forbidden)."""
 
@@ -138,9 +164,9 @@ class BaseConfig(BaseModel):
         for field_name, field_info in cls.model_fields.items():
             val = data.get(field_name)
             if isinstance(val, dict) and "type" not in val:
-                default = field_info.default
-                if isinstance(default, BaseModel) and hasattr(default, "type"):
-                    val["type"] = default.type
+                tag = _default_type_tag(field_info)
+                if tag is not PydanticUndefined:
+                    val["type"] = tag
         return data
 
 
@@ -931,7 +957,7 @@ def _collect_help_panels(
             non_none = [a for a in get_args(inner) if a is not type(None)]
             inner_cls = non_none[0]
             child_rows, child_panels = _collect_help_panels(inner_cls, prefix=full_path)
-            if isinstance(finfo.default, BaseModel):
+            if _default_model_class(finfo) is not None:
                 tag = "optional, enabled by default"
             else:
                 tag = "optional, default: None"
