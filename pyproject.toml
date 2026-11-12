@@ -28,9 +28,10 @@ build-backend = "hatchling.build"
 #   `0.4.1.dev<N>`). No per-commit tags are created.
 [tool.hatch.version]
 source = "vcs"
-# Resolve a version when building without VCS metadata (e.g. an sdist that
-# ships no .git); without it hatch-vcs raises LookupError.
-fallback-version = "0.0.0"
+# The version when the tree has no usable VCS metadata (e.g. rsync'd or
+# Docker-copied without .git), and the base of a checkout with no matching
+# tag (0.0.1.devN+unknown); the label states that the version is unknown.
+fallback-version = "0.0.0+unknown"
 
 [tool.hatch.version.raw-options]
 # PyPI rejects local version segments, so strip the `+g<hash>` suffix.
